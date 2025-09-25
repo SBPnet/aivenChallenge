@@ -1,0 +1,4 @@
+# Fill in these values if you cannot set these in your shell
+
+TF_VAR_AIVEN_TOKEN="<TOKEN HcERE>"
+TF_VAR_AIVEN_PROJECT="<PROJECT_NAME>"
