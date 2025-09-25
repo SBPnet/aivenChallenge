@@ -167,6 +167,8 @@ producer = KafkaProducer(
     value_serializer=lambda v: json.dumps(v).encode('utf-8'),
     retries=5,
     acks='all',
+    batch_size=16384,
+    linger_ms=10
 )
 
 def generate_event() -> dict[str, t.Any]:
