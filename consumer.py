@@ -202,7 +202,7 @@ def _finalize_session(user_id: str) -> None:
     session_state = _active_sessions.pop(user_id, None)
     if not session_state:
         return
-
+    # Calculate duration in seconds
     duration = int((session_state['last_event_time'] - session_state['start_time']).total_seconds())
     cursor = pg_conn.cursor()
     cursor.execute(
@@ -335,7 +335,7 @@ def main() -> None:
             )
             pg_conn.commit()
             cursor.close()
-
+# Handle session metrics
             _handle_session(event)
 
             opensearch_conn.index(index='website-events', body=event)
