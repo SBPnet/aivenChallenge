@@ -45,10 +45,10 @@ except KeyError as err:
         f'in `{terraform_dir}` and that all outputs are defined. Missing key: {err}'
     ) from err
 
-
+# Create list to store temp file paths
 _temp_paths = []
 
-
+# Write PEM content to temp file and store path
 def _write_pem(content: str, suffix: str) -> str:
     temp_file = tempfile.NamedTemporaryFile('w', suffix=suffix, delete=False)
     temp_file.write(content)
@@ -57,7 +57,7 @@ def _write_pem(content: str, suffix: str) -> str:
     _temp_paths.append(temp_file.name)
     return temp_file.name
 
-
+# Cleanup temp files on exit
 def _cleanup_temp_files() -> None:
     for path in _temp_paths:
         try:
@@ -65,10 +65,10 @@ def _cleanup_temp_files() -> None:
         except FileNotFoundError:
             pass
 
-
+# Register cleanup function to run on exit
 atexit.register(_cleanup_temp_files)
 
-
+# Write PEM content to temp files
 CERT_PATH = _write_pem(KAFKA_ACCESS_CERT, suffix='_cert.pem')
 KEY_PATH = _write_pem(KAFKA_ACCESS_KEY, suffix='_key.pem')
 CA_PATH = _write_pem(KAFKA_CA_CERT, suffix='_ca.pem')

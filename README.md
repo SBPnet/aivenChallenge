@@ -117,12 +117,12 @@ Open two terminals, activating the virtual environment in each (`source .venv/bi
 ```mermaid
 graph LR
     A[Synthetic event producer] -->|TLS/SSL| B[(Aiven for Apache Kafka® topic)]
-    B --> C[Streaming consumer]
-    C --> D[(Aiven for PostgreSQL®)]
-    C --> E[(Aiven for OpenSearch®)]
+    B -->|TLS/SSL| C[Streaming consumer]
+    C -->|TLS/SSL| D[(Aiven for PostgreSQL®)]
+    C -->|TLS/SSL| E[(Aiven for OpenSearch®)]
 ```
 
-This diagram reflects the end-to-end topology: `producer.py` sends clickstream events to an Aiven-managed Kafka cluster. `consumer.py` subscribes to the same topic, enriches the events, and persists them to both PostgreSQL for relational analytics and OpenSearch for near-real-time search and dashboards.
+This diagram reflects the end-to-end topology: `producer.py` sends clickstream events to an Aiven-managed Kafka cluster over TLS. `consumer.py` subscribes to the same topic with TLS-enabled Kafka credentials, enriches the events, and persists them via TLS-secured connections to both PostgreSQL for relational analytics and OpenSearch for near-real-time search and dashboards.
 
 ### Event life cycle
 
@@ -249,9 +249,3 @@ for message in consumer:
   1. Convert the OpenSearch URI from `terraform output challenge_opensearch_service_uri` to port `443` and open it in a browser.
   2. Log in with the credentials embedded in the URI.
   3. Create data views for `website-events*` and `session-metrics*` to explore raw events and aggregated sessions.
-
-- **Optionally use the OpenSearch API**:
-
-  ```bash
-  curl -u avnadmin:<password> "https://challenge-opensearch-bigpines-c4ae.l.aivencloud.com:28992/session-metrics/_search?pretty"
-  ```

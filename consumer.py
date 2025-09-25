@@ -68,10 +68,10 @@ def _cleanup_temp_files() -> None:
         except FileNotFoundError:
             pass
 
-
+# Register cleanup function to run on exit
 atexit.register(_cleanup_temp_files)
 
-
+# Write PEM content to temp files
 CERT_PATH = _write_pem(KAFKA_ACCESS_CERT, suffix='_cert.pem')
 KEY_PATH = _write_pem(KAFKA_ACCESS_KEY, suffix='_key.pem')
 CA_PATH = _write_pem(KAFKA_CA_CERT, suffix='_ca.pem')
@@ -144,7 +144,7 @@ def _ensure_index_exists() -> None:
     if not opensearch_conn.indices.exists(index='session-metrics'):
         opensearch_conn.indices.create(index='session-metrics')
 
-
+# Index session metrics
 def _index_session_metrics(session_state: Dict[str, Any], duration: int) -> None:
     """Write the finalized session document into the OpenSearch index."""
     metrics_doc = {
@@ -163,7 +163,7 @@ def _index_session_metrics(session_state: Dict[str, Any], duration: int) -> None
     }
     opensearch_conn.index(index='session-metrics', id=metrics_doc['session_id'], body=metrics_doc)
 
-
+# Parse event timestamp
 def _parse_event_timestamp(event: Dict[str, Any]) -> Optional[datetime]:
     """Return a timezone-aware timestamp derived from the event payload."""
     raw_timestamp = event.get('timestamp')
@@ -177,7 +177,7 @@ def _parse_event_timestamp(event: Dict[str, Any]) -> Optional[datetime]:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
 
-
+# Start new session
 def _start_new_session(user_id: str, event_time: datetime) -> Dict[str, Any]:
     """Initialize an in-memory session tracker for the supplied user."""
     session_state = {
