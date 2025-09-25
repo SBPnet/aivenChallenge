@@ -251,3 +251,12 @@ for message in consumer:
   1. Convert the OpenSearch URI from `terraform output challenge_opensearch_service_uri` to port `443` and open it in a browser.
   2. Log in with the credentials embedded in the URI.
   3. Create data views for `website-events*` and `session-metrics*` to explore raw events and aggregated sessions.
+
+
+## Cleanup
+
+To clean up the resources created by Terraform, run the following command:
+
+```bash
+terraform destroy
+```
