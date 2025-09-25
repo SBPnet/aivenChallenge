@@ -23,6 +23,10 @@ NUM_EVENTS = -1
 # Set Delay between events
 DELAY_SECONDS = 1
 
+# Set batch size in kb and linger time in ms
+BATCH_SIZE = 16384
+LINGER_MS = 10
+
 # Get Terraform outputs
 terraform_dir = os.path.join(os.path.dirname(__file__), 'terraform')
 output = subprocess.run(
@@ -88,8 +92,8 @@ producer = KafkaProducer(
     value_serializer=lambda v: json.dumps(v).encode('utf-8'),
     retries=5,
     acks='all',
-    batch_size=16384,
-    linger_ms=10
+    batch_size=BATCH_SIZE,
+    linger_ms=LINGER_MS  
 )
 
 def generate_event() -> dict[str, object]:
