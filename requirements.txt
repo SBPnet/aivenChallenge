@@ -1,0 +1,5 @@
+faker
+kafka-python
+psycopg2-binary
+opensearch-py
+
