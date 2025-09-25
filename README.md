@@ -2,8 +2,8 @@
 
 ## Prerequisites
 
-- Python 3.11+ (recommended)
-- Terraform 1.6+
+- Python 3.13.7 
+- Terraform 1.5.7
 - An Aiven account and API token with access to your project
 
 # Download from GitHub
