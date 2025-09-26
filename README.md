@@ -139,7 +139,7 @@ sequenceDiagram
     Kafka-->>Consumer: Deliver event batch
     Consumer->>Consumer: Update session cache
     Consumer->>Postgres: INSERT website_events row
-    Consumer->>Postgres: UPSERT session_metrics on finalize
+    Consumer->>Postgres: INSERT session_metrics on finalize
     Consumer->>OpenSearch: Index raw event & session summary
     Consumer->>Consumer: Log / emit diagnostics
 ```
