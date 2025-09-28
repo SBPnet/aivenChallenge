@@ -13,19 +13,20 @@ import subprocess
 import tempfile
 import atexit
 import os
+import heapq
+from dataclasses import dataclass
+from itertools import count
+from typing import Literal, Optional
 from datetime import datetime
 from faker import Faker
 from kafka import KafkaProducer
 
 # Set Number of Events to send (-1 for infinite)
-NUM_EVENTS = -1
-
-# Set Delay between events
-DELAY_SECONDS = 1
+NUM_EVENTS = int(os.getenv('NUM_EVENTS', '-1'))
 
 # Set batch size in kb and linger time in ms
-BATCH_SIZE = 16384
-LINGER_MS = 10
+BATCH_SIZE = int(os.getenv('BATCH_SIZE', '16384'))
+LINGER_MS = int(os.getenv('LINGER_MS', '10'))
 
 # Get Terraform outputs
 terraform_dir = os.path.join(os.path.dirname(__file__), 'terraform')
@@ -80,7 +81,211 @@ CA_PATH = _write_pem(KAFKA_CA_CERT, suffix='_ca.pem')
 # Initialize Faker
 fake = Faker()
 
+# Device types of users
+DEVICE_TYPES = ['mobile', 'desktop', 'tablet']
 
+# Target number of active users
+TARGET_ACTIVE_USERS = int(os.getenv('TARGET_ACTIVE_USERS', '50'))
+
+# Session duration in seconds
+SESSION_DURATION_SECONDS = (
+    int(os.getenv('SESSION_DURATION_MIN', '10')),
+    int(os.getenv('SESSION_DURATION_MAX', '60')),
+)
+if SESSION_DURATION_SECONDS[0] >= SESSION_DURATION_SECONDS[1]:
+    raise ValueError('SESSION_DURATION_MIN must be less than SESSION_DURATION_MAX')
+
+# Action delay in seconds. Adjust to control the rate of events.
+ACTION_DELAY_SECONDS = (
+    float(os.getenv('ACTION_DELAY_MIN', '0.2')),
+    float(os.getenv('ACTION_DELAY_MAX', '1.5')),
+)
+if ACTION_DELAY_SECONDS[0] <= 0 or ACTION_DELAY_SECONDS[0] >= ACTION_DELAY_SECONDS[1]:
+    raise ValueError('ACTION_DELAY_MIN must be positive and less than ACTION_DELAY_MAX')
+
+# Logout failure probability. Adjust to control the rate of failed logouts.
+LOGOUT_FAILURE_PROB = float(os.getenv('LOGOUT_FAILURE_PROB', '0.1'))
+if not 0 <= LOGOUT_FAILURE_PROB <= 1:
+    raise ValueError('LOGOUT_FAILURE_PROB must be between 0 and 1')
+
+# Session inactivity grace period in seconds. Adjust to control the rate of expired sessions.
+SESSION_INACTIVITY_GRACE = float(os.getenv('SESSION_INACTIVITY_GRACE', '5'))
+if SESSION_INACTIVITY_GRACE <= 0:
+    raise ValueError('SESSION_INACTIVITY_GRACE must be positive')
+
+# Random action delay in seconds
+def _random_action_delay() -> float:
+    return random.uniform(*ACTION_DELAY_SECONDS)
+
+# Session class - use dataclass to store session state because it simplifies the code
+@dataclass
+class Session:
+    user_id: str
+    ip_address: str
+    device: str
+    start_time: float
+    end_time: float
+    next_event_at: float
+    state: Literal['login', 'page_view', 'click', 'logout','completed','expired']
+    last_page_url: Optional[str] = None
+    release_at: Optional[float] = None
+
+
+    # Emit event based on current state
+    def emit_event(self, now: float) -> dict[str, object]:
+        timestamp = datetime.now().isoformat()
+        # Emit login event
+        if self.state == 'login':
+            self.state = 'page_view'
+            self.next_event_at = now + _random_action_delay()
+            return {
+                'event_type': 'login',
+                'user_id': self.user_id,
+                'timestamp': timestamp,
+                'ip': self.ip_address,
+                'device': self.device,
+                'success': True,
+            }
+
+        # Emit page view event
+        if self.state == 'page_view':
+            self.last_page_url = fake.uri_path()
+            referrer = fake.uri() if random.random() > 0.5 else None
+            self.state = 'click'
+            self.next_event_at = now + _random_action_delay()
+            return {
+                'event_type': 'page_view',
+                'user_id': self.user_id,
+                'timestamp': timestamp,
+                'page_url': self.last_page_url,
+                'referrer': referrer,
+                'duration_seconds': random.randint(5, 45),
+            }
+
+        # Emit click event
+        if self.state == 'click':
+            event = {
+                'event_type': 'click',
+                'user_id': self.user_id,
+                'timestamp': timestamp,
+                'element_id': fake.word(),
+                'page_url': self.last_page_url or fake.uri_path(),
+            }
+
+            if now >= self.end_time:
+                if random.random() < LOGOUT_FAILURE_PROB:
+                    self.state = 'expired'
+                    self.release_at = now + SESSION_INACTIVITY_GRACE
+                    self.next_event_at = None
+                else:
+                    self.state = 'logout'
+                    self.next_event_at = now + _random_action_delay()
+            else:
+                self.state = 'page_view'
+                self.next_event_at = now + _random_action_delay()
+
+            return event
+
+        # Emit logout event
+        if self.state == 'logout':
+            self.state = 'completed'
+            self.release_at = now
+            self.next_event_at = None
+            session_duration = max(0.0, now - self.start_time)
+            return {
+                'event_type': 'logout',
+                'user_id': self.user_id,
+                'timestamp': timestamp,
+                'session_duration_seconds': session_duration,
+            }
+    
+        raise RuntimeError(f'Unexpected session state {self.state}')
+
+
+class SessionManager:
+    def __init__(self, target_users: int) -> None:
+        self.target_users = target_users
+        self._queue: list[tuple[float, int, Session]] = []
+        self._cooldown: list[tuple[float, int]] = []
+        self._active_sessions: list[Session] = []
+        self._counter = count()
+
+        now = time.monotonic()
+        for _ in range(self.target_users):
+            self._register_session(self._build_session(now))
+
+    def time_until_next_event(self) -> float:
+        now = time.monotonic()
+        self._release_cooldown_sessions(now)
+        self._maybe_spawn_sessions(now)
+
+        if not self._queue:
+            return 0.1
+
+        next_due, _, _ = self._queue[0]
+        return max(0.0, next_due - now)
+
+    def pop_next_event(self) -> Optional[dict[str, object]]:
+        while True:
+            now = time.monotonic()
+            self._release_cooldown_sessions(now)
+            self._maybe_spawn_sessions(now)
+
+            if not self._queue:
+                return None
+
+            next_due, _, session = heapq.heappop(self._queue)
+            now = time.monotonic()
+
+            if next_due > now:
+                heapq.heappush(self._queue, (next_due, next(self._counter), session))
+                return None
+
+            event = session.emit_event(now)
+
+            if session.state in ('completed', 'expired'):
+                try:
+                    self._active_sessions.remove(session)
+                except ValueError:
+                    pass
+                release_at = session.release_at if session.release_at is not None else now
+                heapq.heappush(self._cooldown, (release_at, next(self._counter)))
+            else:
+                heapq.heappush(
+                    self._queue,
+                    (session.next_event_at, next(self._counter), session),
+                )
+
+            if event is not None:
+                return event
+
+    def _build_session(self, now: float) -> Session:
+        duration = random.randint(*SESSION_DURATION_SECONDS)
+        return Session(
+            user_id=fake.uuid4(),
+            ip_address=fake.ipv4(),
+            device=random.choice(DEVICE_TYPES),
+            start_time=now,
+            end_time=now + duration,
+            next_event_at=now,
+            state='login',
+        )
+
+    def _register_session(self, session: Session) -> None:
+        self._active_sessions.append(session)
+        heapq.heappush(
+            self._queue,
+            (session.next_event_at, next(self._counter), session),
+        )
+
+    def _release_cooldown_sessions(self, now: float) -> None:
+        while self._cooldown and self._cooldown[0][0] <= now:
+            heapq.heappop(self._cooldown)
+
+    def _maybe_spawn_sessions(self, now: float) -> None:
+        while len(self._active_sessions) + len(self._cooldown) < self.target_users:
+            session = self._build_session(now)
+            self._register_session(session)
 
 # Now initialize producer with provisioned servers
 producer = KafkaProducer(
@@ -93,35 +298,27 @@ producer = KafkaProducer(
     retries=5,
     acks='all',
     batch_size=BATCH_SIZE,
-    linger_ms=LINGER_MS  
+    linger_ms=LINGER_MS,
 )
 
-def generate_event() -> dict[str, object]:
-    """Generate a single clickstream event ready for Kafka serialization."""
-
-    event_type = random.choice(['login', 'page_view', 'click', 'logout'])
-    user_id = fake.uuid4()
-    timestamp = datetime.now().isoformat()
-    ip_address = fake.ipv4()
-    
-    if event_type == 'login':
-        return {'event_type': 'login', 'user_id': user_id, 'timestamp': timestamp, 'ip': ip_address, 'device': random.choice(['mobile', 'desktop', 'tablet']), 'success': random.choice([True, False])}
-    elif event_type == 'page_view':
-        return {'event_type': 'page_view', 'user_id': user_id, 'timestamp': timestamp, 'page_url': fake.uri_path(), 'referrer': fake.uri() if random.random() > 0.5 else None, 'duration_seconds': random.randint(5, 300)}
-    elif event_type == 'click':
-        return {'event_type': 'click', 'user_id': user_id, 'timestamp': timestamp, 'element_id': fake.word(), 'page_url': fake.uri_path()}
-    elif event_type == 'logout':
-        return {'event_type': 'logout', 'user_id': user_id, 'timestamp': timestamp, 'session_duration': random.randint(60, 3600)}
 
 def main() -> None:
     """Stream synthetic events into the configured Kafka topic for testing."""
     print(f"Starting simulation: Producing to topic {WEBSITE_EVENTS_TOPIC}")
     sent_count = 0
+    session_manager = SessionManager(TARGET_ACTIVE_USERS)
     try:
         while NUM_EVENTS == -1 or sent_count < NUM_EVENTS:
-            event = generate_event()
+            wait_for = session_manager.time_until_next_event()
+            if wait_for > 0:
+                time.sleep(wait_for)
+
+            event = session_manager.pop_next_event()
+            if event is None:
+                continue
+
             future = producer.send(WEBSITE_EVENTS_TOPIC, value=event)
-            
+
             def on_success(metadata):
                 print(f"Event sent: {event['event_type']} to partition {metadata.partition}")
             
@@ -132,13 +329,11 @@ def main() -> None:
             future.add_errback(on_error)
             
             sent_count += 1
-            time.sleep(DELAY_SECONDS)
-            
+
     except KeyboardInterrupt:
         print("Simulation interrupted.")
     finally:
         producer.flush()
         producer.close()
-        print(f"Produced {sent_count} events.")
 if __name__ == "__main__":
     main()
