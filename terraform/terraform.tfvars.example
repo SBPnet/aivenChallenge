@@ -1,4 +1,7 @@
 # Fill in these values if you cannot set these in your shell
+# You can set them in your shell with the following commands:
+# export TF_VAR_AIVEN_API_TOKEN="<TOKEN_HERE>"
+# export TF_VAR_AIVEN_PROJECT="<PROJECT_NAME>"
 
-TF_VAR_AIVEN_TOKEN="<TOKEN HcERE>"
-TF_VAR_AIVEN_PROJECT="<PROJECT_NAME>"
+AIVEN_API_TOKEN="<TOKEN_HERE>"
+AIVEN_PROJECT="<PROJECT_NAME>"

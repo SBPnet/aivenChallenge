@@ -49,8 +49,8 @@ resource "aiven_kafka_topic" "website-events" {
   project      = aiven_kafka.challenge-kafka.project
   service_name = aiven_kafka.challenge-kafka.service_name
   topic_name   = "website-events"
-  partitions   = 1
-  replication  = 2
+  partitions   = 3
+  replication  = 3
 
   depends_on = [aiven_kafka.challenge-kafka]
 }
