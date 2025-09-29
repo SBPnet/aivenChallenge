@@ -14,12 +14,26 @@
 
 ## Environment variables
 
-The environment variables are:
+Two groups of environment variables are used in this project:
 
-- `TF_VAR_AIVEN_API_TOKEN`
-- `TF_VAR_AIVEN_PROJECT`
+- **Terraform provisioning**
+  - `TF_VAR_AIVEN_API_TOKEN`
+  - `TF_VAR_AIVEN_PROJECT`
+  - These can be exported in your shell or defined inside `terraform/terraform.tfvars`.
+- **Streaming pipeline runtime** (see `env.example` for defaults)
+  - `TARGET_ACTIVE_USERS`
+  - `SESSION_DURATION_MIN`
+  - `SESSION_DURATION_MAX`
+  - `ACTION_DELAY_MIN`
+  - `ACTION_DELAY_MAX`
+  - `LOGOUT_FAILURE_PROB`
+  - `SESSION_INACTIVITY_GRACE`
+  - `NUM_EVENTS`
+  - `BATCH_SIZE`
+  - `LINGER_MS`
+  - `KAFKA_ACKS`
 
-The variables can be set in the shell or in the `terraform.tfvars` file.
+Export these variables before running the producer/consumer to override the defaults shown in `env.example`.
 
 ## Aiven API token
 
@@ -62,7 +76,16 @@ Enterprise projects will need to adjust the terraform configuration to match the
    export TF_VAR_AIVEN_PROJECT=<your-project-name>
    ```
 
-3. **Alternately Populate `terraform/terraform.tfvars`** (if not already configured) with any required overrides.
+3. **Populate application environment variables**
+
+   Copy `env.example` to `.env` or export the variables inline before starting the apps. For example:
+
+   ```bash
+   export TARGET_ACTIVE_USERS=500
+   export KAFKA_ACKS=all
+   ```
+
+4. **Alternately Populate `terraform/terraform.tfvars`** (if not already configured) with any required overrides.
 
 ## Provision Aiven Services with Terraform
 
@@ -104,7 +127,7 @@ Open two terminals, activating the virtual environment in each (`source .venv/bi
    python consumer.py
    ```
 
-2. **Start the producer** (generates synthetic events and publishes them to Kafka):
+2. **Start the producer** (generates session-aware synthetic events and publishes them to Kafka):
 
    ```bash
    python producer.py
@@ -150,39 +173,11 @@ sequenceDiagram
 
 - **Terraform-driven configuration**: `producer.py` shells out to `terraform output -json` to fetch the Kafka bootstrap servers, topic name, and SSL material that Terraform provisioned. This keeps the script environment-agnostic—whenever you recreate infrastructure, simply re-run Terraform and the producer automatically targets the new endpoints.
 - **Managed SSL handling**: Aiven services require TLS by default. The helper `_write_pem()` persists the certificate, key, and CA bundle to short-lived temp files, registers them for cleanup via `atexit`, and passes their paths to `KafkaProducer`. Reuse this pattern when you fetch certificates from the Aiven API or Terraform and want to avoid writing secrets to disk permanently.
-- **Event payload schema**: `generate_event()` emits a JSON document built with Faker data, choosing among `login`, `page_view`, `click`, and `logout`. Use this function as the blueprint for your own business events: adjust the fields, add validation, or load data from real sources before calling `producer.send()`.
-- **Throughput controls**: The module-level constants `NUM_EVENTS` and `DELAY_SECONDS` define how long and how quickly the producer runs.
-- **Operational flow**: Inside `main()`, each call to `producer.send()` registers success and error callbacks, prints delivery status, then waits before emitting the next event.
+- **Session-oriented simulation**: Instead of emitting random, uncorrelated events, the `SessionManager` maintains a configurable pool of active `Session` objects. Each session logs in, alternates between page views and clicks, and eventually logs out (with a configurable chance of failing to do so). When a session ends, it is replaced so the active user count stays constant.
+- **Runtime tuning via environment**: Knobs such as `TARGET_ACTIVE_USERS`, action delays, session duration range, logout failure probability, and producer batching (`NUM_EVENTS`, `BATCH_SIZE`, `LINGER_MS`, `KAFKA_ACKS`) can all be set through environment variables.
+- **UTC timestamps**: Events now carry `datetime.now(timezone.utc).isoformat()` timestamps so downstream systems (like OpenSearch Discover) display them accurately regardless of local time zone.
 
-```python
-# producer.py (excerpt)
-import typing as t
-
-producer = KafkaProducer(
-    bootstrap_servers=KAFKA_BOOTSTRAP,
-    security_protocol='SSL',
-    ssl_cafile=CA_PATH,
-    ssl_certfile=CERT_PATH,
-    ssl_keyfile=KEY_PATH,
-    value_serializer=lambda v: json.dumps(v).encode('utf-8'),
-    retries=5,
-    acks='all',
-    batch_size=16384,
-    linger_ms=10
-)
-
-def generate_event() -> dict[str, t.Any]:
-    event_type = random.choice(['login', 'page_view', 'click', 'logout'])
-    user_id = fake.uuid4()
-    timestamp = datetime.now().isoformat()
-    if event_type == 'login':
-        return {'event_type': 'login', 'user_id': user_id, 'timestamp': timestamp, 'success': random.choice([True, False])}
-    # ...additional event types omitted for brevity...
-
-future = producer.send(WEBSITE_EVENTS_TOPIC, value=generate_event())
-future.add_callback(lambda md: print(f"Event sent to partition {md.partition}"))
-future.add_errback(lambda exc: print(f"Error sending event: {exc}"))
-```
+Refer to `env.example` for a curated starting point when scaling load up or down.
 
 ### `consumer.py`: aggregating and persisting events
 
