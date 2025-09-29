@@ -246,7 +246,7 @@ def _finalize_session(user_id: str) -> None:
 
     _index_session_metrics(session_state, duration)
 
-
+# Update session metrics
 def _update_session_metrics(session_state: Dict[str, Any], event: Dict[str, Any], event_time: datetime) -> None:
     """Fold an event into the session aggregates that will be written downstream."""
     session_state['total_events'] += 1
@@ -266,7 +266,7 @@ def _update_session_metrics(session_state: Dict[str, Any], event: Dict[str, Any]
 
     session_state['last_event'] = event
 
-
+# Handle session events
 def _handle_session(event: Dict[str, Any]) -> None:
     """Update user session state and finalize sessions when boundaries are hit."""
     user_id = event.get('user_id')
@@ -294,7 +294,7 @@ def _handle_session(event: Dict[str, Any]) -> None:
     if event.get('event_type') == 'logout':
         _finalize_session(user_id)
 
-
+# Finalize expired sessions
 def _finalize_expired_sessions(reference_time: datetime) -> None:
     """Close any sessions that have exceeded the configured inactivity timeout."""
     expired_users = [
@@ -305,7 +305,7 @@ def _finalize_expired_sessions(reference_time: datetime) -> None:
     for uid in expired_users:
         _finalize_session(uid)
 
-
+# Finalize all sessions
 def _finalize_all_sessions() -> None:
     """Flush any remaining session state prior to shutting down the consumer."""
     remaining_users = list(_active_sessions.keys())

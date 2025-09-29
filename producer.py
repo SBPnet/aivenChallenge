@@ -27,6 +27,7 @@ NUM_EVENTS = int(os.getenv('NUM_EVENTS', '-1'))
 # Set batch size in kb and linger time in ms
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '16384'))
 LINGER_MS = int(os.getenv('LINGER_MS', '10'))
+KAFKA_ACKS = os.getenv('KAFKA_ACKS', 'all')
 
 # Get Terraform outputs
 terraform_dir = os.path.join(os.path.dirname(__file__), 'terraform')
@@ -201,7 +202,7 @@ class Session:
     
         raise RuntimeError(f'Unexpected session state {self.state}')
 
-
+# Session manager
 class SessionManager:
     def __init__(self, target_users: int) -> None:
         self.target_users = target_users
@@ -214,6 +215,7 @@ class SessionManager:
         for _ in range(self.target_users):
             self._register_session(self._build_session(now))
 
+    # Time until next event
     def time_until_next_event(self) -> float:
         now = time.monotonic()
         self._release_cooldown_sessions(now)
@@ -225,6 +227,7 @@ class SessionManager:
         next_due, _, _ = self._queue[0]
         return max(0.0, next_due - now)
 
+    # Pop next event
     def pop_next_event(self) -> Optional[dict[str, object]]:
         while True:
             now = time.monotonic()
@@ -259,6 +262,7 @@ class SessionManager:
             if event is not None:
                 return event
 
+    # Build session with random duration
     def _build_session(self, now: float) -> Session:
         duration = random.randint(*SESSION_DURATION_SECONDS)
         return Session(
@@ -271,6 +275,7 @@ class SessionManager:
             state='login',
         )
 
+    # Register session to the queue
     def _register_session(self, session: Session) -> None:
         self._active_sessions.append(session)
         heapq.heappush(
@@ -278,10 +283,12 @@ class SessionManager:
             (session.next_event_at, next(self._counter), session),
         )
 
+    # Release cooldown sessions
     def _release_cooldown_sessions(self, now: float) -> None:
         while self._cooldown and self._cooldown[0][0] <= now:
             heapq.heappop(self._cooldown)
 
+    # Maybe spawn sessions
     def _maybe_spawn_sessions(self, now: float) -> None:
         while len(self._active_sessions) + len(self._cooldown) < self.target_users:
             session = self._build_session(now)
@@ -296,12 +303,12 @@ producer = KafkaProducer(
     ssl_keyfile=KEY_PATH,
     value_serializer=lambda v: json.dumps(v).encode('utf-8'),
     retries=5,
-    acks='all',
+    acks=KAFKA_ACKS,
     batch_size=BATCH_SIZE,
     linger_ms=LINGER_MS,
 )
 
-
+# Main function
 def main() -> None:
     """Stream synthetic events into the configured Kafka topic for testing."""
     print(f"Starting simulation: Producing to topic {WEBSITE_EVENTS_TOPIC}")
