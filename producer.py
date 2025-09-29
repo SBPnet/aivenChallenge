@@ -17,7 +17,7 @@ import heapq
 from dataclasses import dataclass
 from itertools import count
 from typing import Literal, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from faker import Faker
 from kafka import KafkaProducer
 
@@ -134,7 +134,7 @@ class Session:
 
     # Emit event based on current state
     def emit_event(self, now: float) -> dict[str, object]:
-        timestamp = datetime.now().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         # Emit login event
         if self.state == 'login':
             self.state = 'page_view'
