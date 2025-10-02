@@ -38,7 +38,7 @@ data "aiven_project" "challenge" {
 resource "aiven_kafka" "challenge-kafka" {
   project                 = var.AIVEN_PROJECT
   cloud_name              = "do-tor"
-  plan                    = "startup-2"  # Adjust plan as needed
+  plan                    = "startup-4"  # Adjust plan as needed
   service_name            = "challenge-kafka"
   maintenance_window_dow  = "monday"
   maintenance_window_time = "10:00:00"
